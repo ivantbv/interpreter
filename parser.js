@@ -22,6 +22,9 @@ export function parseBotFile(filePath) {
       } else {
         currentState[currentKey] = value;
       }
+        // ✅ Add this inside commitBuffer to preserve order of multi-line tags
+      if (!currentState._rawOrder) currentState._rawOrder = [];
+      currentState._rawOrder.push({ type: currentKey, value });
     }
 
     buffer = [];
@@ -106,6 +109,10 @@ export function parseBotFile(filePath) {
       if (currentState) {
         if (!currentState.scripts) currentState.scripts = [];
         currentState.scripts.push(scriptText);
+
+        // ✅ Track order for sequential execution
+        if (!currentState._rawOrder) currentState._rawOrder = [];
+        currentState._rawOrder.push({ type: "script", value: scriptText });
       }
 
       currentKey = null;
@@ -147,6 +154,9 @@ export function parseBotFile(filePath) {
         } else {
           currentState[key] = value;
         }
+        // ✅ NEW: Record real tag order
+        if (!currentState._rawOrder) currentState._rawOrder = [];
+        currentState._rawOrder.push({ type: key, value });
         currentKey = null;
       }
       continue;

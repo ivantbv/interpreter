@@ -6,7 +6,6 @@ theme: /
             $context.client = {}
             console.log('first script tag in start', $context.client);
             //$reactions.answer("Hello from reactions.answer!");
-            //$reactions.transition( {value: "/Deliv/Delivery", deferred: false})
         a: Hello! Usual a tag not from script. I will help you to order pizza.
         script:
             $client.test = addTwo(5,5);   

@@ -615,55 +615,80 @@ async _transition(target, userInput = null) {
   //   this.context.input = userInput;
   //   return await this._enterState(stateName);
   // }
-
-  async _enterState(stateName, isInitial = false) {
+  // --- NEW: Execute tags in exact order and stop after go!: ---
+  async _runStateSequentially(stateName) {
     const state = this.states[stateName];
-    if (!state) return `State "${stateName}" not found`;
-  
-    this.log(`Entering state: ${stateName}`);
-  
-    // Collect scripts (state.scripts is array, state.script may also be present)
-    const scripts = [];
-    if (state.script) scripts.push(state.script);
-    if (state.scripts) scripts.push(...state.scripts);
-    for (const script of scripts) await this._executeScript(script);
-  
-    // Collect answers (state.as array or state.a single)
-    const answers = [];
-    if (state.a) answers.push(state.a);
-    if (state.as) answers.push(...state.as);
-  
-    let reply = "";
-    for (const ans of answers) {
-      reply += this._substituteVars(ans) + "\n";
+    if (!state) return "";
+
+    this.log(`Sequentially entering state: ${stateName}`);
+
+    // Parser enhancement fallback: derive property order by index appearance
+    // parser pushes multi-value keys like .scripts, .as, .go!s, so we reconstruct a timeline
+    const orderedEntries = [];
+
+    // preserve key creation order if parser supports it
+    const rawEntries = state._rawOrder || [];
+
+    if (rawEntries.length > 0) {
+      for (const entry of rawEntries) {
+        orderedEntries.push(entry); // already { key, value } if patched parser
+      }
+    } else {
+      // backward compatible fallback (approximate order)
+      for (const key of ['scripts', 'as', 'a', 'go!s', 'go!']) {
+        if (state[key]) {
+          for (const v of state[key]) {
+            const type = key === 'as' ? 'a' : key.replace('s', '');
+            orderedEntries.push({ type, value: v });
+          }
+        }
+      }
     }
-  
-    if (reply.trim()) this.log("Answer:", reply.trim());
-  
-    if (state["buttons"]) {
-      const buttons = this._parseButtons(state["buttons"]);
+
+    let reply = "";
+
+    for (const entry of orderedEntries) {
+      const type = entry.type;
+      const value = entry.value;
+
+      switch (type) {
+        case 'script':
+          await this._executeScript(value);
+          break;
+
+        case 'a':
+          reply += this._substituteVars(value) + "\n";
+          break;
+
+        case 'go!':
+          this.log(`Instant go! transition → ${value}`);
+          const nextReply = await this._transition(value);
+          return (reply + "\n" + nextReply).trim(); // cutoff everything after
+      }
+    }
+
+    // handle deferred transitions and buttons (only if go! not fired)
+    if (state.go) {
+      this.log("Deferred go transition →", state.go);
+      const nextReply = await this._transition(state.go);
+      reply += "\n" + nextReply;
+    }
+
+    if (state.buttons) {
+      const buttons = this._parseButtons(state.buttons);
       if (buttons.length) {
         const buttonsText = buttons.map(b => `- ${b.label}`).join("\n");
         reply += `\n\nOptions:\n${buttonsText}`;
         this.log("Buttons displayed:", buttons.map(b => b.label));
       }
     }
-  
-    // Instant go!: allow for /start but not on initial startup (controlled by caller)
-    // Handle one or more go! tags
-    //if (!isInitial) {
-      const goList = [];
-      if (state["go!"]) goList.push(state["go!"]);
-      if (state["go!s"]) goList.push(...state["go!s"]);
 
-      if (goList.length > 0) {
-        const firstTarget = goList[0]; // 🧠 only first go! matters
-        this.log(`Instant go! transition → ${firstTarget}`);
-        const nextReply = await this._transition(firstTarget);
-        reply += "\n" + nextReply;
-      }
-    //}
     return reply.trim();
   }
+
+
+  async _enterState(stateName, isInitial = false) {
+    return await this._runStateSequentially(stateName);
+  }  
   
 }
