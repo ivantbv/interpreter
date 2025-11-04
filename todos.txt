@@ -1,0 +1,57 @@
+#add $reactions (transition, answer) 
+    timeout - This method sets an automatic transition to another state if there is no input from the user in the specified time
+#add .yaml file with configurations (for gitlab dependencies, $injector global variables etc.)
+#init: tag in the beginning of the scenarios, to execute postProcess and preProccess functions
+#add $chatHistory string in the format:
+    CLIENT
+    [User input/request]
+
+    BOT
+    [First bot reply]
+    [Second bot reply]
+
+    CLIENT
+    [User input/request]
+#to $context or $request to add:
+    -timestamp 
+    -the chatId (probably from my chat-operator)
+    -response (this is the bot response) - response.replies - which will have an object with
+        {
+            type: "text", 
+            text: "the bot's response",
+            currentState: "/Current/State"
+        }
+    -contextHistory - this will be the previous state that the user was in and the user input:
+        {
+            previousState: "/Previous/State",
+            userInput: $input #can use the $input here probably?
+        }
+
+FIXED: (TO IMPROVE WITH $regex tag in q tags)
+#global q! tag doesnt work. it doesnt transition to that state
+
+
+WHEN FRONTEND DEVELOPMENT STARTS!:
+#write HTML tags in the "a:" tags
+FIXED:
+#$input object stays the same when inputting different information throughout states (it assigns only the
+first time, then)
+FIXED:
+    #check if its possible to leave comments with // in the script tags and # in the rest of the .bot files
+FIXED:
+    #debug why the go! in Start doesnt transition instantly to the next state the 2nd time it goes around
+FIXED:
+    #multiple "a:" tags - only the last one is displayed.Same for the script tags. I can have at the beginning
+    #of the state or at the end (before a: and after a:) and both script tags should be executed 
+#PARTIALLY FIXED:
+#highlight syntax in .bot files
+    Open Command Palette → Preferences: Open Settings (JSON)
+    or press Ctrl + Shift + P, then type that.
+    Add this line inside your settings object:
+    "files.associations": {
+        "*.bot": "yaml"
+    }
+    TO BE CONSIDERED for highlight syntax: 
+    Would you like me to generate a small .tmLanguage.json syntax definition next?
+    That would give your .bot files native highlighting (e.g., state: and a: in distinct colors, 
+    ${} syntax colored like JS, etc.), not just YAML-based coloring.

@@ -1,0 +1,23 @@
+-лучше добавлять ; в конце выражениях в тэге script
+-можно писать джаваскрипт в тэгах "a:" через ${}, например ${addTwo(5, 3)}
+
+$reactions.answer("Message text"); - simple usage. In the text response, i 
+can also use substitutions inside the ${} which can contain any valid JavaScript expression, like so: 
+$reactions.answer(Hello, {{ $client.name }}!);
+ Also the possibility to write HTML inside it like in the regular "a:" tag (but thats for when I 
+ start with the frontend integration) Next is the $reactions.buttons these are all valid ways to 
+ write it: $reactions.buttons({ text: "Transition button", // Required transition: "/state" }) - 
+ this button is equal to a button in a tag "buttons:" that has a state to transition to. 
+ $reactions.buttons("One button") - this is a single button, its equal to a button in a tag 
+ "buttons:" that doesnt specify a state to transition to (just input in the chat) 
+ $reactions.buttons(["One button", "And another one"]) - I can also add multiple buttons without a 
+ state to transition to in an array. This should also be a valid button Now the 
+ $reactions.transition $reactions.transition( {value: "/Welcome", deferred: false} ); - 
+ it takes 2 arguments - value and deferred. value is the state path that you can transition to 
+ when clicking that button. The path after can be both absolute and relative 
+ (like in the usual transitions we have already) / — root topic; . — current state; .. — state from a 
+ higher level (parent state); ./.. — separation of path elements. The deferred flag is a boolean. 
+ The function with the deferred transition flag deferred=true is equivalent to the "go:" tag. The 
+ function with the deferred flag deferred=false is equivalent to the "go!:" tag. 
+ $reactions.transition("/Welcome"); -this is also a valid call with just the state path, in this case 
+ the transition is with a deferred=false

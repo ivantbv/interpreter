@@ -1,0 +1,9 @@
+theme: /Deliv
+    state: Delivery
+        a: In state delivery!
+        #a: another a:. just because
+        script:
+            //$reactions.answer('Reactions answer in delivery')
+            var result = addTwo(2,2)
+        buttons:
+            "Home" -> /ChooseCity

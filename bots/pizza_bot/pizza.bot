@@ -1,0 +1,66 @@
+theme: /
+    state: Start
+        q!: $regex</start>
+        script:
+            $context.session = {}
+            $context.client = {}
+            console.log('first script tag in start', $context.client);
+            //$reactions.answer("Hello from reactions.answer!");
+            //$reactions.transition( {value: "/Deliv/Delivery", deferred: false})
+        a: Hello! Usual a tag not from script. I will help you to order pizza.
+        script:
+            $client.test = addTwo(5,5);   
+        #go!: /Deliv/Delivery
+        go!: /ChooseCity
+        a: this shouldnt be visible!
+        go!: /Deliv/Delivery
+        
+
+    state: ChooseCity
+        script:
+            var result = addTwo(3,5, "444-555")
+            console.log(result, 'result', $client.phoneNumber, 'and phone number, client test:',
+                         $client.test, ' and input', $input)
+            $client.toUpper = upper('string here')
+            console.log($client.toUpper, ' upper function???')
+            console.log(">>>", ['apple', 'orange', 'stuff like that']);
+            ['apple',
+             'orange',
+              'stuff like that'].forEach(x => console.log(x));
+        a: Select your city.. ${$client.toUpper}
+        a: ${upper("hello")} — result of addTwo is ${addTwo(2, 3, "x")}
+        #go: RememberCity
+        buttons:
+            "another"
+            "New York" 
+            "Washington"
+            "Burgas" -> RememberCity
+
+        state: RememberCity
+            q: *
+            script:
+                $client.city = $input
+                $session.cart = []
+            a: Great! ${$client.city} added to your profile. ${$client.phoneNumber}
+            #go!: /NewTheme/Asda
+
+            state: Confirm
+                q: *
+                a: Your latest input is ${$input}! and your client.city is ${$client.city}
+                #go!: /Deliv/Delivery
+                # buttons:
+                #     "To start" -> /Start
+theme: /NewTheme
+    state: Asda
+        q!: $regex<asd>
+        a: Hello! this is new theme
+        buttons:
+            "To start" -> /Start
+    
+    state: kicks
+        q!: $regex<another>
+        a: in state kicks
+    # state: Delivery
+    #     a: In state delivery!
+    #     buttons:
+    #         "Home" -> /Start
