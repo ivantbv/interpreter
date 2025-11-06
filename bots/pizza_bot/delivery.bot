@@ -4,6 +4,7 @@ theme: /Deliv
         #a: another a:. just because
         script:
             //$reactions.answer('Reactions answer in delivery')
-            var result = addTwo(2,2)
+            var result = addTwo(2,2);
+            console.log(result, ' this is result!', $client.test);
         buttons:
             "Home" -> /ChooseCity

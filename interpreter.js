@@ -17,7 +17,8 @@ export class BotInterpreter {
     this.currentState = "Start";
     this.debug = debug;
     this.sandbox = null;
-  
+    this._requestedTransition = null;
+
     const fullPath = path.resolve(__dirname, botPath);
     const stat = fs.statSync(fullPath);
   
@@ -53,6 +54,23 @@ export class BotInterpreter {
       Date,
       Promise,
     };
+
+    sandbox.$reactions = {
+      transition: (arg) => {
+        // Usage: $reactions.transition("/Welcome") OR $reactions.transition({value:"/Welcome", deferred:true/false})
+        let target = null, deferred = false;
+        if (typeof arg === "string") {
+          target = arg;
+          deferred = false;
+        } else if (typeof arg === "object" && arg !== null) {
+          target = arg.value || arg.path || "";
+          deferred = !!arg.deferred;
+        }
+        if (target) this._setRequestedTransition(target, deferred);
+        return Promise.resolve();
+      }
+      // Optionally add aliases: go, go!
+    };    
   
     vm.createContext(sandbox);
   
@@ -238,6 +256,17 @@ export class BotInterpreter {
     return "I didn’t understand that. Please try again.";
   }  
 
+  _setRequestedTransition(target, deferred = false) {
+    if (!this._requestedTransition) {
+      this._requestedTransition = { target, deferred };
+    }
+  }
+  
+  // Clear transition flag before each state entry
+  _clearRequestedTransition() {
+    this._requestedTransition = null;
+  }
+
   _handleButtonClick(message, buttons) {
     const clicked = buttons.find(b => b.label.toLowerCase() === message.toLowerCase());
     if (clicked) {
@@ -372,7 +401,24 @@ _getCurrentState() {
       sandbox.$session = this.context.session;
       sandbox.$request = this.context.request;
       sandbox.$input = this.context.input || "";
-  
+      
+      sandbox.$reactions = {
+        transition: (arg) => {
+          // Usage: $reactions.transition("/Welcome") OR $reactions.transition({value:"/Welcome", deferred:true/false})
+          let target = null, deferred = false;
+          if (typeof arg === "string") {
+            target = arg;
+            deferred = false;
+          } else if (typeof arg === "object" && arg !== null) {
+            target = arg.value || arg.path || "";
+            deferred = !!arg.deferred;
+          }
+          if (target) this._setRequestedTransition(target, deferred);
+          return Promise.resolve();
+        }
+        // Optionally add aliases: go, go!
+      };
+      
       // Ensure context is an actual vm context
       vm.createContext(sandbox);
   
@@ -451,6 +497,23 @@ _getCurrentState() {
         ...this.sandbox, // keep helper functions available
         console,
       };
+
+      sandbox.$reactions = {
+        transition: (arg) => {
+          // Usage: $reactions.transition("/Welcome") OR $reactions.transition({value:"/Welcome", deferred:true/false})
+          let target = null, deferred = false;
+          if (typeof arg === "string") {
+            target = arg;
+            deferred = false;
+          } else if (typeof arg === "object" && arg !== null) {
+            target = arg.value || arg.path || "";
+            deferred = !!arg.deferred;
+          }
+          if (target) this._setRequestedTransition(target, deferred);
+          return Promise.resolve();
+        }
+        // Optionally add aliases: go, go!
+      };      
   
       vm.createContext(sandbox);
   
@@ -619,61 +682,65 @@ async _transition(target, userInput = null) {
   async _runStateSequentially(stateName) {
     const state = this.states[stateName];
     if (!state) return "";
-
+  
     this.log(`Sequentially entering state: ${stateName}`);
-
-    // Parser enhancement fallback: derive property order by index appearance
-    // parser pushes multi-value keys like .scripts, .as, .go!s, so we reconstruct a timeline
-    const orderedEntries = [];
-
-    // preserve key creation order if parser supports it
-    const rawEntries = state._rawOrder || [];
-
-    if (rawEntries.length > 0) {
-      for (const entry of rawEntries) {
-        orderedEntries.push(entry); // already { key, value } if patched parser
-      }
-    } else {
-      // backward compatible fallback (approximate order)
-      for (const key of ['scripts', 'as', 'a', 'go!s', 'go!']) {
-        if (state[key]) {
-          for (const v of state[key]) {
-            const type = key === 'as' ? 'a' : key.replace('s', '');
-            orderedEntries.push({ type, value: v });
-          }
-        }
-      }
-    }
-
+  
+    this._clearRequestedTransition(); // Reset for each state entry
+  
+    // Use parser's _rawOrder for real tag order
+    const orderedEntries = state._rawOrder || [];
+  
     let reply = "";
-
+    let goTriggered = false;
+  
     for (const entry of orderedEntries) {
-      const type = entry.type;
-      const value = entry.value;
-
+      if (goTriggered) break; // only first transition is honored
+      const { type, value } = entry;
+  
       switch (type) {
         case 'script':
           await this._executeScript(value);
+          // After any script, check for $reactions.transition
+          if (this._requestedTransition && !this._requestedTransition.deferred) {
+            goTriggered = true;
+            const target = this._requestedTransition.target;
+            this.log(`[reactions] Instant transition → ${target}`);
+            this._clearRequestedTransition();
+            const nextReply = await this._transition(target);
+            return (reply + "\n" + nextReply).trim();
+          }
           break;
-
+  
         case 'a':
           reply += this._substituteVars(value) + "\n";
           break;
-
+  
         case 'go!':
+          goTriggered = true;
           this.log(`Instant go! transition → ${value}`);
+          this._clearRequestedTransition();
           const nextReply = await this._transition(value);
-          return (reply + "\n" + nextReply).trim(); // cutoff everything after
+          return (reply + "\n" + nextReply).trim();
       }
     }
-
-    // handle deferred transitions and buttons (only if go! not fired)
+  
+    // Handle deferred transitions from script (after all tags)
+    if (this._requestedTransition && this._requestedTransition.deferred) {
+      const target = this._requestedTransition.target;
+      this.log(`[reactions] Deferred transition → ${target}`);
+      this._clearRequestedTransition();
+      const nextReply = await this._transition(target);
+      reply += "\n" + nextReply;
+    }
+  
+    // Standard go: (deferred)
     if (state.go) {
       this.log("Deferred go transition →", state.go);
       const nextReply = await this._transition(state.go);
       reply += "\n" + nextReply;
     }
-
+  
+    // Buttons
     if (state.buttons) {
       const buttons = this._parseButtons(state.buttons);
       if (buttons.length) {
@@ -682,9 +749,9 @@ async _transition(target, userInput = null) {
         this.log("Buttons displayed:", buttons.map(b => b.label));
       }
     }
-
+  
     return reply.trim();
-  }
+  }  
 
 
   async _enterState(stateName, isInitial = false) {

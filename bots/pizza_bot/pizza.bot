@@ -6,10 +6,10 @@ theme: /
             $context.client = {}
             console.log('first script tag in start', $context.client);
             //$reactions.answer("Hello from reactions.answer!");
+            $reactions.transition({ value: "/Deliv/Delivery", deferred: false });
         a: Hello! Usual a tag not from script. I will help you to order pizza.
         script:
-            $client.test = addTwo(5,5);   
-        #go!: /Deliv/Delivery
+            $client.test = addTwo(5,5);
         go!: /ChooseCity
         a: this shouldnt be visible!
         go!: /Deliv/Delivery
@@ -28,7 +28,7 @@ theme: /
               'stuff like that'].forEach(x => console.log(x));
         a: Select your city.. ${$client.toUpper}
         a: ${upper("hello")} — result of addTwo is ${addTwo(2, 3, "x")}
-        #go: RememberCity
+        #go!: /Deliv/Delivery
         buttons:
             "another"
             "New York" 
@@ -41,7 +41,7 @@ theme: /
                 $client.city = $input
                 $session.cart = []
             a: Great! ${$client.city} added to your profile. ${$client.phoneNumber}
-            #go!: /NewTheme/Asda
+            go: ..
 
             state: Confirm
                 q: *
@@ -56,9 +56,11 @@ theme: /NewTheme
         buttons:
             "To start" -> /Start
     
-    state: kicks
-        q!: $regex<another>
-        a: in state kicks
+        state: kicks
+            q!: $regex<another>
+            a: in state kicks
+            buttons:
+                "To up?" -> /
     # state: Delivery
     #     a: In state delivery!
     #     buttons:
