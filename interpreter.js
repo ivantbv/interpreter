@@ -338,42 +338,51 @@ _getCurrentState() {
   /**
    * Recursively find a matching nested (child) state by checking "q" triggers under the current state
    */
-   _findMatchingState(input, parentPath = this.currentState) {
-    const themeData = this.bot[this.theme];
-    if (!themeData || !themeData.states) return null;
+   /**
+ * Find a matching direct child state (not grandchildren) by checking "q" triggers.
+ */
+/**
+ * Finds a matching q: among direct child OR sibling states (i.e. same parent) of parentPath.
+ */
+ _findMatchingState(input, parentPath = this.currentState) {
+  const themeData = this.bot[this.theme];
+  if (!themeData || !themeData.states) return null;
 
-    for (const [stateName, stateData] of Object.entries(this.states)) {
-      // Only consider states that are nested under the current parentPath
-      if (!stateName.startsWith(parentPath + "/")) continue;
+  // Find the parent prefix of the current path (i.e., grandparent of this state)
+  let parentPrefix;
+  if (parentPath === "/" || parentPath === "") {
+    parentPrefix = "/"; // root theme, top-level states
+  } else {
+    // Take all but the last segment for siblings
+    parentPrefix = parentPath.split("/").slice(0, -1).join("/");
+    if (!parentPrefix) parentPrefix = "/";
+  }
+  const prefix = parentPrefix.endsWith("/") ? parentPrefix : parentPrefix + "/";
 
-      // If it's a direct child (not a deeper one), we test its q:
-      const subPath = stateName.slice(parentPath.length + 1);
-      if (!subPath.includes("/")) {
-        // --- Check q: condition ---
-        if (stateData["q"]) {
-          const q = stateData["q"].trim();
+  // Get direct siblings (including current!) and direct children.
+  for (const [stateName, stateData] of Object.entries(this.states)) {
+    // Either direct child or direct sibling of parent
+    if (!stateName.startsWith(prefix)) continue;
+    const rel = stateName.slice(prefix.length);
+    if (!rel || rel.includes("/")) continue; // skip grandchildren etc.
 
-          if (q === "*") {
-            return stateName;
-          }
+    // Don't rematch current state itself
+    if (stateName === parentPath) continue;
 
-          try {
-            const regex = this._parseRegex(q);
-            if (regex && regex.test(input)) {
-              return stateName;
-            }
-          } catch (e) {
-            // ignore invalid regex
-          }
-        }
-        // --- Recurse into this child to check its own nested children ---
-        const deeperMatch = this._findMatchingState(input, stateName);
-        if (deeperMatch) return deeperMatch;
+    // Check q: on this state
+    if (stateData["q"]) {
+      const q = String(stateData["q"]).trim();
+      if (q === "*") return stateName;
+      try {
+        const regex = this._parseRegex(q);
+        if (regex && regex.test(input)) return stateName;
+      } catch (e) {
+        // ignore invalid regex
       }
     }
-
-    return null;
   }
+  return null;
+}
 
   // --- UPDATED: uses persistent sandbox ---
   async _executeScript(script) {
@@ -581,64 +590,87 @@ _getCurrentState() {
 // Resolve a target into { theme, stateKey } where:
 // - theme is like "/Deliv" or "/" (always starts with "/")
 // - stateKey is the flattened state key that the parser created, e.g. "/Start" or "/ChooseCity/RememberCity"
-_resolveStatePath(target) {
-  if (!target) return null;
-
-  target = String(target).trim().replace(/\/+$/, "");
-
-  let currentFull = this.currentState || "";
-  if (!currentFull.startsWith("/")) currentFull = "/" + currentFull;
-
-  // --- Absolute path starting with / ---
-  if (target.startsWith("/")) {
-    const parts = target.slice(1).split("/").filter(Boolean);
-
-    if (parts.length === 1) {
-      // Single segment, e.g. "/ChooseCity" → search in root theme first
-      if (this.bot["/"] && this.bot["/"].states["/" + parts[0]]) {
-        return { theme: "/", state: "/" + parts[0] };
-      }
-      // fallback: current theme
-      if (this.bot[this.theme] && this.bot[this.theme].states["/" + parts[0]]) {
-        return { theme: this.theme, state: "/" + parts[0] };
-      }
-    } else if (parts.length > 1) {
-      // Multi-segment: first part might be a theme
-      const candidateTheme = "/" + parts[0];
-      if (this.bot[candidateTheme]) {
-        return { theme: candidateTheme, state: "/" + parts.slice(1).join("/") };
-      }
-      // fallback to root theme
-      const rootState = "/" + parts.join("/");
-      if (this.bot["/"] && this.bot["/"].states[rootState]) {
-        return { theme: "/", state: rootState };
-      }
-      // fallback: current theme
-      if (this.bot[this.theme] && this.bot[this.theme].states[rootState]) {
-        return { theme: this.theme, state: rootState };
-      }
+  _resolveStatePath(target) {
+    if (!target) return null;
+  
+    target = String(target).trim().replace(/\/+$/, "");
+    let currentFull = this.currentState || "";
+    if (!currentFull.startsWith("/")) currentFull = "/" + currentFull;
+    let themeKey = this.theme.startsWith("/") ? this.theme : "/" + this.theme;
+  
+    // Up N levels ONLY (e.g. "..", "../..", "../../..")
+    if (/^(\.\.\/?)+$/.test(target)) {
+      const upCount = target.split("/").filter(s => s === "..").length;
+      let pieces = currentFull.slice(1).split("/").filter(Boolean);
+      pieces = pieces.slice(0, Math.max(0, pieces.length - upCount));
+      return { theme: themeKey, state: "/" + pieces.join("/") };
     }
-
-    // last resort
-    return { theme: this.theme, state: "/" + parts.join("/") };
+  
+    // Starts with .. and then child (e.g. "../child", "../../other")
+    if (/^((\.\.)\/)+.+/.test(target)) {
+      const segments = target.split("/");
+      let upCount = 0;
+      while (segments[upCount] === "..") upCount++;
+      let pieces = currentFull.slice(1).split("/").filter(Boolean);
+      pieces = pieces.slice(0, Math.max(0, pieces.length - upCount));
+      if (segments.length > upCount) {
+        pieces = pieces.concat(segments.slice(upCount));
+      }
+      return { theme: themeKey, state: "/" + pieces.join("/") };
+    }
+  
+    // "./child" -- go to direct child state from current
+    if (target.startsWith("./")) {
+      const child = target.slice(2);
+      return { theme: themeKey, state: currentFull + "/" + child };
+    }
+  
+    // "child" or "SomeState"
+    if (/^[^.\/][^\/]*$/.test(target)) {
+      return { theme: themeKey, state: currentFull + "/" + target };
+    }
+  
+    // Absolute path
+    if (target.startsWith("/")) {
+      // (...leave your absolute logic unchanged...)
+      const parts = target.slice(1).split("/").filter(Boolean);
+      if (parts.length === 1) {
+        if (this.bot["/"] && this.bot["/"].states["/" + parts[0]]) {
+          return { theme: "/", state: "/" + parts[0] };
+        }
+        if (this.bot[this.theme] && this.bot[this.theme].states["/" + parts[0]]) {
+          return { theme: this.theme, state: "/" + parts[0] };
+        }
+      } else if (parts.length > 1) {
+        const candidateTheme = "/" + parts[0];
+        if (this.bot[candidateTheme]) {
+          return { theme: candidateTheme, state: "/" + parts.slice(1).join("/") };
+        }
+        const rootState = "/" + parts.join("/");
+        if (this.bot["/"] && this.bot["/"].states[rootState]) {
+          return { theme: "/", state: rootState };
+        }
+        if (this.bot[this.theme] && this.bot[this.theme].states[rootState]) {
+          return { theme: this.theme, state: rootState };
+        }
+      }
+      return { theme: this.theme, state: "/" + parts.join("/") };
+    }
+  
+    // fallback
+    const candidate1 = (currentFull ? currentFull + "/" + target : "/" + target).replace(/\/+/g, "/");
+    if (this.bot[this.theme] && this.bot[this.theme].states[candidate1]) {
+      return { theme: this.theme, state: candidate1 };
+    }
+  
+    const candidate2 = "/" + target;
+    if (this.bot[this.theme] && this.bot[this.theme].states[candidate2]) {
+      return { theme: this.theme, state: candidate2 };
+    }
+  
+    return { theme: this.theme, state: "/" + target.replace(/^\/+/, "") };
   }
-
-  // --- Relative paths etc remain unchanged ---
-  if (target.startsWith("..")) { /* ... */ }
-  if (target.startsWith("./")) { /* ... */ }
-
-  const candidate1 = (currentFull ? currentFull + "/" + target : "/" + target).replace(/\/+/g, "/");
-  if (this.bot[this.theme] && this.bot[this.theme].states[candidate1]) {
-    return { theme: this.theme, state: candidate1 };
-  }
-
-  const candidate2 = "/" + target;
-  if (this.bot[this.theme] && this.bot[this.theme].states[candidate2]) {
-    return { theme: this.theme, state: candidate2 };
-  }
-
-  return { theme: this.theme, state: "/" + target.replace(/^\/+/, "") };
-}
+  
 
 // Transition to target (target can be absolute /Theme/State, /State, relative names, ./, ../)
 async _transition(target, userInput = null) {

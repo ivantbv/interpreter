@@ -10,9 +10,9 @@ theme: /
         a: Hello! Usual a tag not from script. I will help you to order pizza.
         script:
             $client.test = addTwo(5,5);
-        go!: /ChooseCity
-        a: this shouldnt be visible!
-        go!: /Deliv/Delivery
+        #go!: /ChooseCity
+        #a: this shouldnt be visible!
+        #go!: /Deliv/Delivery
         
 
     state: ChooseCity
@@ -41,14 +41,14 @@ theme: /
                 $client.city = $input
                 $session.cart = []
             a: Great! ${$client.city} added to your profile. ${$client.phoneNumber}
-            go: ..
+            #go!: /
 
             state: Confirm
-                q: *
+                #q: *
                 a: Your latest input is ${$input}! and your client.city is ${$client.city}
                 #go!: /Deliv/Delivery
-                # buttons:
-                #     "To start" -> /Start
+                buttons:
+                    "To start" -> /Start
 theme: /NewTheme
     state: Asda
         q!: $regex<asd>
@@ -60,7 +60,7 @@ theme: /NewTheme
             q!: $regex<another>
             a: in state kicks
             buttons:
-                "To up?" -> /
+                "To up?" -> /Start
     # state: Delivery
     #     a: In state delivery!
     #     buttons:

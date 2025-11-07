@@ -8,3 +8,23 @@ theme: /Deliv
             console.log(result, ' this is result!', $client.test);
         buttons:
             "Home" -> /ChooseCity
+            "SomeState" -> /SomeState
+
+    state: SomeState
+        q: *
+        a: write smth
+        buttons:
+            "Back to Delivery" -> ..
+            "forward" -> ./forward
+        
+        state: forward
+            a: in forward
+            buttons:
+                "back to SomeState" -> ../
+                "next child state" -> childState
+            
+            state: childState
+                q: *
+                a: in next child state!
+                buttons:
+                    "2 backs to SomeState?" -> ../../
