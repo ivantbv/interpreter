@@ -13,7 +13,7 @@ export class BotInterpreter {
     this.context = { session: {}, client: {}, request: {} };
     this.theme = null;
     this.states = {};
-    this.bot = {}; // 👈 Added: holds full parsed bot structure (by theme)
+    this.bot = {}; // 👈 holds full parsed bot structure (by theme)
     this.currentState = "Start";
     this.debug = debug;
     this.sandbox = null;
@@ -39,40 +39,77 @@ export class BotInterpreter {
     const jsFiles = fs.readdirSync(folderPath).filter(f => f.endsWith(".js"));
   
     // Shared sandbox for this bot project
-    const sandbox = {
-      $context: this.context,
-      $client: this.context.client,
-      $session: this.context.session,
-      $request: this.context.request,
-      $input: "",
-      console,
-      fetch,
-      setTimeout,
-      setInterval,
-      clearTimeout,
-      clearInterval,
-      Date,
-      Promise,
-    };
+    const self = this; // Save interpreter context outside
 
-    sandbox.$reactions = {
-      transition: (arg) => {
-        // Usage: $reactions.transition("/Welcome") OR $reactions.transition({value:"/Welcome", deferred:true/false})
-        let target = null, deferred = false;
-        if (typeof arg === "string") {
+    const sandbox = {
+    $context: self.context,
+    $client: self.context.client,
+    $session: self.context.session,
+    $request: self.context.request,
+    $input: "",
+    console,
+    fetch,
+    setTimeout,
+    setInterval,
+    clearTimeout,
+    clearInterval,
+    Date,
+    Promise,
+    $reactions: {
+        transition: (arg) => {
+          let target = null, deferred = false;
+          if (typeof arg === "string") {
           target = arg;
           deferred = false;
-        } else if (typeof arg === "object" && arg !== null) {
+          } else if (typeof arg === "object" && arg !== null) {
           target = arg.value || arg.path || "";
           deferred = !!arg.deferred;
+          }
+          if (target) self._setRequestedTransition(target, deferred);
+          return Promise.resolve();
+        },
+        buttons: (arg) => {
+          if (!self._scriptedButtons) self._scriptedButtons = [];
+      
+          const pushButton = (label, target) => {
+            if (target) {
+              // Resolve target to absolute theme+state path (flat)
+              const resolved = self._resolveStatePath(target);
+              if (!resolved || !resolved.state) {
+                self.log(`[WARN] [reactions.buttons] Could not resolve target "${target}" relative to "${self.currentState}"`);
+                self._scriptedButtons.push({ label, target: null });
+                return;
+              }
+              // Compose normalized full path with theme + state for storage
+              const normalized = this._normalizeResolvedPath(resolved) //`${resolved.theme}${resolved.state}`;
+              self._scriptedButtons.push({ label, target: normalized });
+              self.log(`[DEBUG] [reactions.buttons] Added button "${label}" → ${normalized}`);
+            } else {
+              self._scriptedButtons.push({ label, target: null });
+              self.log(`[DEBUG] [reactions.buttons] Added button "${label}" (no target)`);
+            }
+          };
+      
+          if (typeof arg === "string") {
+            pushButton(arg, null);
+          } else if (Array.isArray(arg)) {
+            for (const label of arg) pushButton(label, null);
+          } else if (typeof arg === "object" && arg !== null) {
+            if (arg.text) {
+              pushButton(arg.text, arg.transition || null);
+            } else if (arg.buttons) {
+              for (const btn of arg.buttons) {
+                pushButton(btn.text, btn.transition);
+              }
+            }
+          }
+      
+          return Promise.resolve();
         }
-        if (target) this._setRequestedTransition(target, deferred);
-        return Promise.resolve();
-      }
-      // Optionally add aliases: go, go!
-    };    
-  
-    vm.createContext(sandbox);
+    }
+  };
+
+  vm.createContext(sandbox);
   
     // Load all .js helper files
     for (const jsFile of jsFiles) {
@@ -205,51 +242,74 @@ export class BotInterpreter {
     this.log(`Received message: "${message}" (currentState = ${this.currentState})`);
     this.context.input = message;
     if (this.sandbox) this.sandbox.$input = message;
-
-    // 🔹 Step 1: Check global q! triggers across ALL themes
+  
+    // 1. Find global q! matches NOT in current state
+    let globalMatch = null;
     for (const [themeName, themeData] of Object.entries(this.bot)) {
       for (const [stateName, stateData] of Object.entries(themeData.states)) {
-        if (stateData["q!"]) {
+        if (stateData["q!"] && stateName !== this.currentState) {
           const regex = this._parseRegex(stateData["q!"]);
           if (regex && regex.test(message)) {
             this.log(`Global regex matched in theme "${themeName}", state "${stateName}":`, regex);
-            // Transition to the matched state (absolute path)
-            const fullTarget = `${themeName}${stateName}`;
-            return await this._transition(fullTarget, message);
+            globalMatch = `${themeName}${stateName}`;
           }
         }
       }
     }
   
-    // 🔹 Step 2: Handle buttons in the current state
+    // 2. Button handling (EXPLICIT)
     const state = this._getCurrentState();
-    if (state["buttons"]) {
-      const buttons = this._parseButtons(state["buttons"]);
-      this.log("Available buttons:", buttons.map(b => b.label));
-      const reply = this._handleButtonClick(message, buttons);
-      if (reply) return reply;
-    }
+    // if (state["buttons"]) {
+    //   const buttons = this._parseButtons(state["buttons"]);
+    //   this.log("Available buttons:", buttons.map(b => b.label));
+    //   const reply = this._handleButtonClick(message, buttons);
+    //   if (reply) return reply;
+    // }
+    const staticButtons = state["buttons"]
+    ? this._parseButtons(state["buttons"])
+    : [];
+    const reply = this._handleButtonClick(message, staticButtons);
+    if (reply) return reply;
   
-    // 🔹 Step 3: Check regex only for the current state
+    // 3. Local q! in current state
     if (state["q!"]) {
       const regex = this._parseRegex(state["q!"]);
       if (regex && regex.test(message)) {
-        this.log("Regex matched:", regex);
-        return await this._transition(state["go"] || state["go!"]);
+        // Predict if local transition leads to self
+        const target = state["go"] || state["go!"];
+        if (target) {
+          const resolved = this._resolveStatePath(target);
+          const nextStateKey = resolved && resolved.state;
+          if (nextStateKey === this.currentState) {
+            // Would loop to self—skip, prefer global q!
+            this.log("Local q! would loop to self, skipping to global.");
+          } else {
+            this.log("Regex matched:", regex);
+            return await this._transition(target);
+          }
+        } else {
+          // No explicit target—would stay in same state; skip to global too.
+          this.log("Local q! would loop (no explicit go), skipping to global.");
+        }
       }
-    }
+    }    
   
-    // 🔹 Step 4: Check deferred go:
+    // 4. Deferred go:
     if (state["go"]) {
       this.log("Deferred go transition to:", state["go"]);
       return await this._transition(state["go"], message);
     }
-
-    // 🔹 Step 5 (NEW): Check for matching nested child state (q:)
+  
+    // 5. Nested q: (children/siblings)
     const nestedMatch = this._findMatchingState(message);
     if (nestedMatch) {
       this.log(`Nested child state matched: ${nestedMatch}`);
       return await this._transition(nestedMatch, message);
+    }
+  
+    // 6. If nothing else, trigger global q!
+    if (globalMatch) {
+      return await this._transition(globalMatch, message);
     }
   
     this.log("No match for message, staying in state:", this.currentState);
@@ -268,37 +328,60 @@ export class BotInterpreter {
   }
 
   _handleButtonClick(message, buttons) {
-    const clicked = buttons.find(b => b.label.toLowerCase() === message.toLowerCase());
-    if (clicked) {
-      this.log(`Button clicked: "${clicked.label}" → ${clicked.target || "null"}`);
+    const lowerMsg = message.toLowerCase();
   
-      // 🧠 If the button has a valid target → transition as usual
+    // Normalize static buttons' targets
+    const normalizedStaticButtons = (buttons || []).map(b => {
+      if (b.target) {
+        const resolved = this._resolveStatePath(b.target);
+        if (resolved && resolved.state) {
+          const normalized = this._normalizeResolvedPath(resolved);
+          return {
+            label: b.label,
+            target: normalized //`${resolved.theme}${resolved.state}`
+          };
+        }
+      }
+      return { label: b.label, target: null };
+    });
+  
+    // Combine normalized static buttons + any dynamic ones from $reactions.buttons()
+    const allButtons = [
+      ...normalizedStaticButtons,
+      ...(this._scriptedButtons || [])
+    ];
+  
+    if (allButtons.length > 0) {
+      this.log("[DEBUG] Available buttons (combined):", allButtons.map(b => `${b.label} → ${b.target || "null"}`));
+    }
+  
+    const clicked = allButtons.find(b => b.label.toLowerCase() === lowerMsg);
+    if (clicked) {
+      this.log(`[DEBUG] Button clicked: "${clicked.label}" (target = ${clicked.target || "null"})`);
+  
+      // If button has a valid target → transition to it
       if (clicked.target) {
+        this.log(`[DEBUG] Transitioning via button "${clicked.label}" → ${clicked.target}`);
         return this._transition(clicked.target, message);
       }
   
-      // 🧩 Otherwise, treat it as normal user input (loop-safe)
+      // Otherwise, treat as a normal user message
       if (this._buttonRecursionGuard === message) {
-        this.log(`Prevented recursion loop for button "${message}"`);
+        this.log(`[DEBUG] Prevented recursion loop for button "${message}"`);
         return null;
       }
   
-      // 🛡️ Set guard to prevent infinite recursion if same button triggers itself again
       this._buttonRecursionGuard = message;
-      
-      this.context.input = message;
-      if (this.sandbox) this.sandbox.$input = message;
-
-      this.log(`Button "${message}" has no target — treating as normal message input`);
+      this.log(`[DEBUG] Button "${message}" has no target — reinterpreting as message`);
       const result = this.handleMessage(message);
-  
-      // ✅ Clear the guard afterward
       this._buttonRecursionGuard = null;
-  
       return result;
     }
+  
+    this.log(`[DEBUG] No button matched message "${message}"`);
     return null;
-  }  
+  }
+  
 
   // _getCurrentState() {
   //   return this.states[this.currentState] || {};
@@ -344,112 +427,71 @@ _getCurrentState() {
 /**
  * Finds a matching q: among direct child OR sibling states (i.e. same parent) of parentPath.
  */
- _findMatchingState(input, parentPath = this.currentState) {
-  const themeData = this.bot[this.theme];
-  if (!themeData || !themeData.states) return null;
+  _findMatchingState(input, parentPath = this.currentState) {
+    const themeData = this.bot[this.theme];
+    if (!themeData || !themeData.states) return null;
 
-  // Find the parent prefix of the current path (i.e., grandparent of this state)
-  let parentPrefix;
-  if (parentPath === "/" || parentPath === "") {
-    parentPrefix = "/"; // root theme, top-level states
-  } else {
-    // Take all but the last segment for siblings
-    parentPrefix = parentPath.split("/").slice(0, -1).join("/");
-    if (!parentPrefix) parentPrefix = "/";
-  }
-  const prefix = parentPrefix.endsWith("/") ? parentPrefix : parentPrefix + "/";
+    // 1. Try direct children first
+    const childPrefix = parentPath.endsWith("/") ? parentPath : parentPath + "/";
 
-  // Get direct siblings (including current!) and direct children.
-  for (const [stateName, stateData] of Object.entries(this.states)) {
-    // Either direct child or direct sibling of parent
-    if (!stateName.startsWith(prefix)) continue;
-    const rel = stateName.slice(prefix.length);
-    if (!rel || rel.includes("/")) continue; // skip grandchildren etc.
-
-    // Don't rematch current state itself
-    if (stateName === parentPath) continue;
-
-    // Check q: on this state
-    if (stateData["q"]) {
-      const q = String(stateData["q"]).trim();
-      if (q === "*") return stateName;
-      try {
-        const regex = this._parseRegex(q);
-        if (regex && regex.test(input)) return stateName;
-      } catch (e) {
-        // ignore invalid regex
+    for (const [stateName, stateData] of Object.entries(this.states)) {
+      if (!stateName.startsWith(childPrefix)) continue;
+      const rel = stateName.slice(childPrefix.length);
+      if (!rel || rel.includes("/")) continue; // must be direct child
+      if (stateData["q"]) {
+        const q = String(stateData["q"]).trim();
+        if (q === "*") return stateName;
+        try {
+          const regex = this._parseRegex(q);
+          if (regex && regex.test(input)) return stateName;
+        } catch (e) {}
       }
     }
-  }
-  return null;
-}
 
+    // 2. If no direct child matches, try siblings
+    let parentPrefix;
+    if (parentPath === "/" || parentPath === "") {
+      parentPrefix = "/"; // root theme, top-level states
+    } else {
+      parentPrefix = parentPath.split("/").slice(0, -1).join("/");
+      if (!parentPrefix) parentPrefix = "/";
+    }
+    const siblingPrefix = parentPrefix.endsWith("/") ? parentPrefix : parentPrefix + "/";
+
+    for (const [stateName, stateData] of Object.entries(this.states)) {
+      if (!stateName.startsWith(siblingPrefix)) continue;
+      const rel = stateName.slice(siblingPrefix.length);
+      if (!rel || rel.includes("/")) continue; // only direct siblings/roots
+      if (stateName === parentPath) continue; // don't match self
+      if (stateData["q"]) {
+        const q = String(stateData["q"]).trim();
+        if (q === "*") return stateName;
+        try {
+          const regex = this._parseRegex(q);
+          if (regex && regex.test(input)) return stateName;
+        } catch (e) {}
+      }
+    }
+
+    return null;
+  }
   // --- UPDATED: uses persistent sandbox ---
   async _executeScript(script) {
-    try {
-      // Use persistent sandbox if available, otherwise create a fresh one
-      const sandbox = this.sandbox || {
-        $context: this.context,
-        $client: this.context.client,
-        $session: this.context.session,
-        $request: this.context.request,
-        $input: "",
-        console,
-        fetch,
-        setTimeout,
-        setInterval,
-        clearTimeout,
-        clearInterval,
-        Date,
-        Promise
-      };
-  
-      // IMPORTANT: keep sandbox references in sync with this.context each run
-      sandbox.$context = this.context;
-      sandbox.$client = this.context.client;
-      sandbox.$session = this.context.session;
-      sandbox.$request = this.context.request;
-      sandbox.$input = this.context.input || "";
-      
-      sandbox.$reactions = {
-        transition: (arg) => {
-          // Usage: $reactions.transition("/Welcome") OR $reactions.transition({value:"/Welcome", deferred:true/false})
-          let target = null, deferred = false;
-          if (typeof arg === "string") {
-            target = arg;
-            deferred = false;
-          } else if (typeof arg === "object" && arg !== null) {
-            target = arg.value || arg.path || "";
-            deferred = !!arg.deferred;
-          }
-          if (target) this._setRequestedTransition(target, deferred);
-          return Promise.resolve();
-        }
-        // Optionally add aliases: go, go!
-      };
-      
-      // Ensure context is an actual vm context
-      vm.createContext(sandbox);
-  
-      // Wrap user script in async IIFE so it can use await
-      const wrapped = `(async () => { ${script} })()`;
-  
-      // Run script inside the persistent sandbox
-      const result = await vm.runInContext(wrapped, sandbox, { timeout: 20000 });
-  
-      // Copy back any mutated objects if sandbox was newly created (defensive)
-      if (!this.sandbox) {
-        this.context = sandbox.$context;
-        this.context.client = sandbox.$client;
-        this.context.session = sandbox.$session;
-        this.context.request = sandbox.$request;
+      try {
+        if (!this.sandbox) throw new Error("Sandbox not initialized");
+          this.sandbox.$context = this.context;
+          this.sandbox.$client = this.context.client;
+          this.sandbox.$session = this.context.session;
+          this.sandbox.$request = this.context.request;
+          this.sandbox.$input = this.context.input || "";
+          
+          const wrapped = `(async () => { ${script} })()`;
+          return await vm.runInContext(wrapped, this.sandbox, { timeout: 20000 });
+        
+        } catch (e) {
+          console.error("Script error:", e);
       }
-  
-      return result;
-    } catch (e) {
-      console.error("Script error:", e);
     }
-  }
   
 //_substituteVars with only script tags escaping for anti xss scripting (safe)
   // _substituteVars(text) {
@@ -671,7 +713,9 @@ _getCurrentState() {
     return { theme: this.theme, state: "/" + target.replace(/^\/+/, "") };
   }
   
-
+  _normalizeResolvedPath(resolved) {
+    return resolved.theme === "/" ? resolved.state : `${resolved.theme}${resolved.state}`;
+  }
 // Transition to target (target can be absolute /Theme/State, /State, relative names, ./, ../)
 async _transition(target, userInput = null) {
   if (!target) return "";
@@ -718,7 +762,8 @@ async _transition(target, userInput = null) {
     this.log(`Sequentially entering state: ${stateName}`);
   
     this._clearRequestedTransition(); // Reset for each state entry
-  
+    this._scriptedButtons = [];
+
     // Use parser's _rawOrder for real tag order
     const orderedEntries = state._rawOrder || [];
   
@@ -773,14 +818,15 @@ async _transition(target, userInput = null) {
     }
   
     // Buttons
-    if (state.buttons) {
-      const buttons = this._parseButtons(state.buttons);
-      if (buttons.length) {
-        const buttonsText = buttons.map(b => `- ${b.label}`).join("\n");
-        reply += `\n\nOptions:\n${buttonsText}`;
-        this.log("Buttons displayed:", buttons.map(b => b.label));
-      }
-    }
+// Merge scripted buttons and static tag buttons
+  const tagButtons = state.buttons ? this._parseButtons(state.buttons) : [];
+  const combinedButtons = this._scriptedButtons.concat(tagButtons);
+
+  if (combinedButtons.length) {
+    const buttonsText = combinedButtons.map(b => `${b.label}`).join("\n");
+    reply += `\n\nOptions:\n${buttonsText}`;
+    this.log("Buttons displayed:", combinedButtons.map(b => b.label));
+  }
   
     return reply.trim();
   }  

@@ -6,25 +6,30 @@ theme: /Deliv
             //$reactions.answer('Reactions answer in delivery')
             var result = addTwo(2,2);
             console.log(result, ' this is result!', $client.test);
-        buttons:
-            "Home" -> /ChooseCity
-            "SomeState" -> /SomeState
+            $reactions.buttons({ text: "SomeState", transition: "../SomeState" });
+            $reactions.buttons({ text: "Home", transition: "/ChooseCity" });
 
     state: SomeState
-        q: *
         a: write smth
+        script:
+            $reactions.buttons({
+                text: "forward",
+                transition: "./forward"
+            });
         buttons:
-            "Back to Delivery" -> ..
-            "forward" -> ./forward
+            "Back to Delivery" -> /Delivery
+            "tag forward" -> forward
         
         state: forward
+            #q!: $regex<>
             a: in forward
+            script:
+                $reactions.buttons({ text: "back to SomeState", transition: "../" })
             buttons:
-                "back to SomeState" -> ../
                 "next child state" -> childState
             
             state: childState
-                q: *
+                #q: *
                 a: in next child state!
                 buttons:
                     "2 backs to SomeState?" -> ../../
