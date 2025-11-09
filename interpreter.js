@@ -105,6 +105,13 @@ export class BotInterpreter {
           }
       
           return Promise.resolve();
+        },
+        answer: (text) => {
+          if (!self._scriptedAnswers) self._scriptedAnswers = [];
+          const safe = typeof text === "string" ? text : String(text);
+          self._scriptedAnswers.push(safe);
+          self.log(`[DEBUG] [reactions.answer] Added scripted answer: "${safe}"`);
+          return Promise.resolve();
         }
     }
   };
@@ -771,13 +778,17 @@ async _transition(target, userInput = null) {
     let goTriggered = false;
   
     for (const entry of orderedEntries) {
-      if (goTriggered) break; // only first transition is honored
+      if (goTriggered) break;
       const { type, value } = entry;
+  
+      // CLEAR answer buffer for **each tag**
+      this._scriptedAnswers = [];
   
       switch (type) {
         case 'script':
           await this._executeScript(value);
-          // After any script, check for $reactions.transition
+
+          // ... handle $reactions.transition ...
           if (this._requestedTransition && !this._requestedTransition.deferred) {
             goTriggered = true;
             const target = this._requestedTransition.target;
@@ -786,6 +797,12 @@ async _transition(target, userInput = null) {
             const nextReply = await this._transition(target);
             return (reply + "\n" + nextReply).trim();
           }
+          // Append any $reactions.answer(s) emitted DURING this script
+          if (this._scriptedAnswers && this._scriptedAnswers.length > 0) {
+            this.log(`[DEBUG] Injecting ${this._scriptedAnswers.length} scripted answers into output (from current script tag)`);
+            reply += this._scriptedAnswers.join("\n") + "\n";
+          }
+          this._scriptedAnswers = [];
           break;
   
         case 'a':
@@ -798,6 +815,12 @@ async _transition(target, userInput = null) {
           this._clearRequestedTransition();
           const nextReply = await this._transition(value);
           return (reply + "\n" + nextReply).trim();
+      }
+      // Append any $reactions.answer(s) emitted DURING other tag types (if you support that)
+      if (this._scriptedAnswers && this._scriptedAnswers.length > 0) {
+        this.log(`[DEBUG] Injecting ${this._scriptedAnswers.length} scripted answers into output (from non-script tag)`);
+        reply += this._scriptedAnswers.join("\n") + "\n";
+        this._scriptedAnswers = [];
       }
     }
   

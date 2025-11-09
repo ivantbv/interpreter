@@ -3,15 +3,15 @@ theme: /Deliv
         a: In state delivery!
         #a: another a:. just because
         script:
-            //$reactions.answer('Reactions answer in delivery')
+            $reactions.answer('Reactions answer in delivery')
             var result = addTwo(2,2);
             console.log(result, ' this is result!', $client.test);
             $reactions.buttons({ text: "SomeState", transition: "../SomeState" });
             $reactions.buttons({ text: "Home", transition: "/ChooseCity" });
 
     state: SomeState
-        a: write smth
         script:
+            $reactions.answer('write smth')
             $reactions.buttons({
                 text: "forward",
                 transition: "./forward"

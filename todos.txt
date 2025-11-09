@@ -1,4 +1,4 @@
-#to add $reactions.answer, $reactions.buttons, $reactions.timeout
+#to add $reactions.timeout
 #make transitions of buttons, $reactions.transition and "go" tags with relative and absolute paths 
     (right now this doesnt work)
     timeout - This method sets an automatic transition to another state if there is no input from the user in the specified time
@@ -29,7 +29,9 @@
             userInput: $input #can use the $input here probably?
         }
 
-ADDED: add $reactions.transition - to test  
+ADDED: $reactions.answer
+ADDED: $reactions.buttons
+ADDED: $reactions.transition  
 
 FIXED: (TO IMPROVE WITH $regex tag in q tags)
 #global q! tag doesnt work. it doesnt transition to that state

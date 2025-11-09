@@ -1,5 +1,6 @@
 -лучше добавлять ; в конце выражениях в тэге script
--можно писать джаваскрипт в тэгах "a:" через ${}, например ${addTwo(5, 3)}
+-можно писать джаваскрипт выражения в тэгах "a:" через ${}, например ${addTwo(5, 3)}
+-можно писать JS выражения в $reactions.buttons через `${}` 
 
 $reactions.answer("Message text"); - simple usage. In the text response, i 
 can also use substitutions inside the ${} which can contain any valid JavaScript expression, like so: 
