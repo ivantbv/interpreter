@@ -81,7 +81,7 @@ export class BotInterpreter {
                 return;
               }
               // Compose normalized full path with theme + state for storage
-              const normalized = this._normalizeResolvedPath(resolved) //`${resolved.theme}${resolved.state}`;
+              const normalized = self._normalizeResolvedPath(resolved); //`${resolved.theme}${resolved.state}`;
               self._scriptedButtons.push({ label, target: normalized });
               self.log(`[DEBUG] [reactions.buttons] Added button "${label}" → ${normalized}`);
             } else {
@@ -228,22 +228,27 @@ export class BotInterpreter {
   }  
 
   async start() {
-    // start at flattened key
     this.currentState = "/Start";
     this.log("Starting bot at state:", this.currentState);
-  
-    const reply = await this._enterState(this.currentState, true);
-  
+    const result = await this._enterState(this.currentState, true);
     const state = this._getCurrentState();
+  
     if (state["go!"]) {
       this.log("Following instant go! transition to:", state["go!"]);
       const nextReply = await this._transition(state["go!"]);
-      return (reply ? reply + "\n" + nextReply : nextReply).trim();
+      if (nextReply && typeof nextReply === "object" && nextReply.answers) {
+        return {
+          answers: [...result.answers, ...nextReply.answers],
+          buttons: nextReply.buttons || []
+        };
+      }
+      return {
+        answers: [...result.answers, String(nextReply)],
+        buttons: []
+      };
     }
-  
-    return reply.trim();
-  }  
-  
+    return result;
+  }
 
   async handleMessage(message) {
     this.log(`Received message: "${message}" (currentState = ${this.currentState})`);
@@ -320,7 +325,7 @@ export class BotInterpreter {
     }
   
     this.log("No match for message, staying in state:", this.currentState);
-    return "I didn’t understand that. Please try again.";
+    return { answers: ["I didn’t understand that. Please try again."], buttons: [] }
   }  
 
   _setRequestedTransition(target, deferred = false) {
@@ -762,64 +767,61 @@ async _transition(target, userInput = null) {
   //   return await this._enterState(stateName);
   // }
   // --- NEW: Execute tags in exact order and stop after go!: ---
-  async _runStateSequentially(stateName) {
+  // --- NEW: Execute tags in exact order and stop after go!: ---
+async _runStateSequentially(stateName) {
     const state = this.states[stateName];
-    if (!state) return "";
+    if (!state) return { answers: [""], buttons: [] };
   
     this.log(`Sequentially entering state: ${stateName}`);
   
-    this._clearRequestedTransition(); // Reset for each state entry
+    this._clearRequestedTransition();
     this._scriptedButtons = [];
-
-    // Use parser's _rawOrder for real tag order
-    const orderedEntries = state._rawOrder || [];
-  
-    let reply = "";
+    let answers = [];
     let goTriggered = false;
+  
+    // Use parser's _rawOrder for tag order
+    const orderedEntries = state._rawOrder || [];
   
     for (const entry of orderedEntries) {
       if (goTriggered) break;
       const { type, value } = entry;
-  
-      // CLEAR answer buffer for **each tag**
       this._scriptedAnswers = [];
   
       switch (type) {
         case 'script':
           await this._executeScript(value);
-
-          // ... handle $reactions.transition ...
           if (this._requestedTransition && !this._requestedTransition.deferred) {
             goTriggered = true;
             const target = this._requestedTransition.target;
             this.log(`[reactions] Instant transition → ${target}`);
             this._clearRequestedTransition();
-            const nextReply = await this._transition(target);
-            return (reply + "\n" + nextReply).trim();
+            const next = await this._transition(target);
+            // Recursively flatten answers
+            if (next && typeof next === "object" && next.answers)
+              return { answers: [...answers, ...next.answers], buttons: next.buttons ?? [] };
+            return { answers: [...answers, String(next)], buttons: [] };
           }
-          // Append any $reactions.answer(s) emitted DURING this script
           if (this._scriptedAnswers && this._scriptedAnswers.length > 0) {
             this.log(`[DEBUG] Injecting ${this._scriptedAnswers.length} scripted answers into output (from current script tag)`);
-            reply += this._scriptedAnswers.join("\n") + "\n";
+            answers.push(...this._scriptedAnswers);
           }
           this._scriptedAnswers = [];
           break;
-  
         case 'a':
-          reply += this._substituteVars(value) + "\n";
+          answers.push(this._substituteVars(value));
           break;
-  
         case 'go!':
           goTriggered = true;
           this.log(`Instant go! transition → ${value}`);
           this._clearRequestedTransition();
-          const nextReply = await this._transition(value);
-          return (reply + "\n" + nextReply).trim();
+          const next = await this._transition(value);
+          if (next && typeof next === "object" && next.answers)
+            return { answers: [...answers, ...next.answers], buttons: next.buttons ?? [] };
+          return { answers: [...answers, String(next)], buttons: [] };
       }
-      // Append any $reactions.answer(s) emitted DURING other tag types (if you support that)
       if (this._scriptedAnswers && this._scriptedAnswers.length > 0) {
         this.log(`[DEBUG] Injecting ${this._scriptedAnswers.length} scripted answers into output (from non-script tag)`);
-        reply += this._scriptedAnswers.join("\n") + "\n";
+        answers.push(...this._scriptedAnswers);
         this._scriptedAnswers = [];
       }
     }
@@ -829,34 +831,51 @@ async _transition(target, userInput = null) {
       const target = this._requestedTransition.target;
       this.log(`[reactions] Deferred transition → ${target}`);
       this._clearRequestedTransition();
-      const nextReply = await this._transition(target);
-      reply += "\n" + nextReply;
+      const next = await this._transition(target);
+      if (next && typeof next === "object" && next.answers)
+        answers = [...answers, ...next.answers];
+      else
+        answers = [...answers, String(next)];
     }
   
     // Standard go: (deferred)
     if (state.go) {
       this.log("Deferred go transition →", state.go);
-      const nextReply = await this._transition(state.go);
-      reply += "\n" + nextReply;
+      const next = await this._transition(state.go);
+      if (next && typeof next === "object" && next.answers)
+        answers = [...answers, ...next.answers];
+      else
+        answers = [...answers, String(next)];
     }
   
-    // Buttons
-// Merge scripted buttons and static tag buttons
-  const tagButtons = state.buttons ? this._parseButtons(state.buttons) : [];
-  const combinedButtons = this._scriptedButtons.concat(tagButtons);
-
-  if (combinedButtons.length) {
-    const buttonsText = combinedButtons.map(b => `${b.label}`).join("\n");
-    reply += `\n\nOptions:\n${buttonsText}`;
-    this.log("Buttons displayed:", combinedButtons.map(b => b.label));
+    // STRUCTURED BUTTONS
+    const tagButtons = state.buttons ? this._parseButtons(state.buttons) : [];
+    const combinedButtons = this._scriptedButtons.concat(tagButtons);
+  
+    if (combinedButtons.length) {
+      this.log("Buttons displayed:", combinedButtons.map(b => b.label));
+    }
+  
+    return {
+      answers: answers.filter(Boolean),
+      buttons: combinedButtons.length ? combinedButtons : []
+    };
   }
   
-    return reply.trim();
-  }  
 
 
   async _enterState(stateName, isInitial = false) {
     return await this._runStateSequentially(stateName);
   }  
+
+  _formatForApi(rawReply) {
+    // Accepts a string (plain fallback) or an object with full bot output
+    // You can extend this in the future to extract buttons etc.
+    if (typeof rawReply === "string") {
+      // naive fallback for now, actual version should parse button/options info too
+      return { answers: [rawReply] };
+    }
+    return rawReply;
+  }
   
 }

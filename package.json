@@ -10,9 +10,11 @@
   "author": "Ivan",
   "license": "ISC",
   "dependencies": {
+    "express": "^5.1.0",
     "fs": "^0.0.1-security",
-    "vm": "^0.1.0"
+    "uuid": "^13.0.0",
+    "vm": "^0.1.0",
+    "ws": "^8.18.3"
   },
-  "devDependencies": {},
   "keywords": []
 }

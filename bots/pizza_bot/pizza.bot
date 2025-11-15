@@ -5,7 +5,6 @@ theme: /
             $context.session = {}
             $context.client = {}
             console.log('first script tag in start', $context.client);
-            $reactions.answer("Hello from reactions.answer!");
             $reactions.buttons({ text: "Todeliv from reactions", transition: "/Deliv/Delivery" });
             $reactions.buttons({ text: `${addTwo(3, 3)}`,  transition: "../ChooseCity" });
             //$reactions.transition({ value: "/Deliv/Delivery", deferred: false });
@@ -13,6 +12,7 @@ theme: /
         script:
             //$reactions.transition({ value: "/Deliv/Delivery", deferred: false });
             $client.test = addTwo(5,5);
+            $reactions.answer("Hello from reactions.answer!");
             $reactions.answer(`Another reactions answer - client.test - ${$client.test}`);
         buttons:
             "More btns"    
@@ -42,8 +42,11 @@ theme: /
             script:
                 $client.city = $input
                 $session.cart = []
+                var response = await fetchExample();
+                $reactions.answer(`THE TEMPERATURE ISSSS!!  ${response.temperature}`)
+                console.log(response, 'responseeeeeeeeeeeeeeeeee')
             a: Great! ${$client.city} added to your profile. ${$client.phoneNumber}
-            #go!: /
+            go!: ./Confirm
 
             state: Confirm
                 #q: *
